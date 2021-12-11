@@ -1,0 +1,71 @@
+- hosts: all
+  remote_user: ec2-user
+  become: yes
+  tasks:
+# Installing Apache in the server
+    - name: Install apache on the server
+       yum:
+         name: httpd
+         state: present
+
+    - name: Start the apache
+       service:
+           name: httpd
+           state: started
+
+    - name: Copy the index.html
+       copy:
+         src: ./index.html
+         dest: /var/www/html/index.html
+         mode: '0777'
+# Installing Datadog-agent by shell script      
+    - name: Installing and starting the datadog agent
+      copy:
+        src: ./datadog_install.sh
+        dest: /home/ec2-user/datadog_url.sh
+
+# Executing the url and start Datadog-agent
+    - name: Run datadog-agent
+      command: "{{ item }}"
+      with_items:
+      - sh /home/ec2-user/datadog_url.sh
+      - sudo systemctl start datadog-agent
+      
+# 3 Config files were modified now 
+    - name: Change datadog-agent config file content
+      lineinfile:
+          path: /etc/datadog-agent/datadog.yaml
+          regexp: "^# logs_enabled: false"
+          line: "logs_enabled: true"
+          backrefs: yes
+
+    - name: change apache config file content
+      lineinfile:
+          path: /etc/httpd/conf/httpd.conf
+          line: "<Location /server-status>\n\tSetHandler server-status\n</Location>\nExtendedStatus On"
+          insertbefore: "^Supplemental"
+          
+# changing datadog-apache config file but before that we need to rename a file
+    - name: Renaming file name
+      command: mv /etc/datadog-agent/conf.d/apache.d/conf.yaml.example /etc/datadog-agent/conf.d/apache.d/conf.yaml
+            
+    - name: Change datadog-apache config file content
+      lineinfile:
+          path: /etc/datadog-agent/conf.d/apache.d/conf.yaml
+          line: "logs:\n  - type: file\n    path: /var/log/httpd/access_log\n    source: apache\n    service: httpd\n  - type: file\n    path: /var/log/httpd/error_log\n    source: apache\n    service: httpd"
+            
+    - name: Change apache logs folder permissions
+       file:
+         path: /var/log/httpd
+         mode: 0655
+
+
+#Restart apache and datadog-agent
+
+    - name: Restarting datadog-agent and httpd
+      command: "{{ item }}"
+      with_items:
+      - sudo service datadog-agent restart
+      - sudo service httpd restart
+
+
